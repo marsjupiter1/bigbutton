@@ -1,5 +1,3 @@
-
-
 #include <stdio.h>
 #include <HTTPClient.h>
 #include <WebServer.h>
@@ -193,12 +191,12 @@ unsigned long eeprom_crc(void)
 
 
 bool readFile(String name, String &buffer) {
- 
+
   buffer = "";
   File file = SPIFFS.open(name, FILE_READ);
   if (file) {
-     buffer.reserve(file.size());
-  
+    buffer.reserve(file.size());
+
     while (file.available()) {
       const char c = file.read();
 
@@ -228,11 +226,13 @@ class CButtonProfile {
     int repeat_time;
     int tuya_mode;
     String  press_string;
-    String  tuya_device;
+    String  tuya_device_id;
     String tuya_api_key;
     String tuya_api_client;
     String tuya_host;
-    String tuya_ip;
+    // switch command from cloud
+    String tuya_switch;
+ 
 };
 
 #define MAX_PROFILES 10
@@ -250,27 +250,23 @@ int haveProfile(String &name) {
   return -1;
 }
 
+void verifyProfile(){
+  
+}
 
 void writeCurrentProfile() {
 
-  char buffer[3000];
+  char buffer[1000];
 
-  Serial.print("WriteCurrentProfile: ");Serial.println(profile.name);
-  Serial.print("Profile index: ");Serial.println(haveProfile(profile.name));
-  strcpy(buffer, " {\"t_device\":\""); strcat(buffer, profile.tuya_device.c_str());
-   strcat(buffer,   "\",\"l_mode\": \"" );  strcat(buffer, String(profile.led_mode).c_str());
-    Serial.println(258);Serial.flush();
-     strcat(buffer,   "\",\"p_string\":\""); strcat(buffer, profile.press_string.c_str());
+  Serial.print("WriteCurrentProfile: "); Serial.println(profile.name);
+  Serial.print("Profile index: "); Serial.println(haveProfile(profile.name));
+  strcpy(buffer, " {\"t_device_id\":\""); strcat(buffer, profile.tuya_device_id.c_str());
+  strcat(buffer,   "\",\"l_mode\": \"" );  strcat(buffer, String(profile.led_mode).c_str());
+  strcat(buffer,   "\",\"p_string\":\""); strcat(buffer, profile.press_string.c_str());
   strcat(buffer, "\",\"name\":\""); strcat(buffer, profile.name.c_str());
-      Serial.println(260);Serial.flush();
-  strcat(buffer, "\",\"t_ip\":\""); strcat(buffer, profile.tuya_ip.c_str());
   strcat(buffer, "\",\"t_api_key\": \""); strcat(buffer, profile.tuya_api_key.c_str());
   strcat(buffer, "\",\"t_api_client\": \""); strcat(buffer, profile.tuya_api_client.c_str());
   strcat(buffer,   "\",\"t_host\": \"");  strcat(buffer, profile.tuya_host.c_str());
-      Serial.println(265);Serial.flush();
- 
- 
-  Serial.println(268);Serial.flush();
   strcat(buffer,   "\",\"t_mode\": \""); strcat(buffer, String(profile.tuya_mode).c_str());
   strcat(buffer,    "\",\"l_time\": \""); strcat(buffer, String(profile.led_time).c_str());
   strcat(buffer,   "\",\"poff_time\" :\""); strcat(buffer, String(profile.power_off_time).c_str());
@@ -278,13 +274,14 @@ void writeCurrentProfile() {
   strcat(buffer,  "\",\"p_mode\": \""); strcat(buffer, String(profile.press_mode).c_str());
   strcat(buffer,  "\",\"p_time\": \""); strcat(buffer, String(profile.press_time).c_str());
   strcat(buffer, "\"}");
-  Serial.println(buffer);Serial.flush();
+
   String filename = String("/") + String(haveProfile(profile.name)) + ".js";
-  Serial.println(filename);;Serial.flush();
+  SPIFFS.remove(filename);
   File file = SPIFFS.open(filename, FILE_WRITE);
 
   int l = strlen(buffer);
-  Serial.print("Length: ");Serial.println(l);
+  Serial.print("Length: "); Serial.println(l);
+  Serial.print(buffer);
 
   for (int i = 0; i <= l; i++) {
     file.write(buffer[i]);
@@ -324,7 +321,7 @@ bool readSettings(String & buffer) {
   if (SPIFFS.exists(settings_file)) {
 
     if ( readFile(settings_file, buffer)) {
-     
+
       Serial.print("Profile in settings: ");
       Serial.println(buffer);
 
@@ -339,12 +336,12 @@ bool readSettings(String & buffer) {
   return false;
 }
 
-bool readProfile(int profilenumber,String & buffer) {
-  
- Serial.print("read profile: ");Serial.print(buffer);
+bool readProfile(int profilenumber, String & buffer) {
+
+  Serial.print("read profile: "); Serial.print(buffer);
   String name = String("/") + String(profilenumber) + ".js";
-  
-  if (readFile(name, buffer)){
+
+  if (readFile(name, buffer)) {
     return true;
   }
   return false;
@@ -353,7 +350,7 @@ bool readProfile(int profilenumber,String & buffer) {
 void installProfile(int profilenumber) {
 
   String buffer;
-  readProfile(profilenumber,buffer);
+  readProfile(profilenumber, buffer);
   DynamicJsonDocument root(4000);
 
   DeserializationError err = deserializeJson(root, buffer);
@@ -361,21 +358,49 @@ void installProfile(int profilenumber) {
 
   if (!err) {
 
-    if (root.containsKey("name")) {profile.name = (const char *) root["name"];}else Serial.println("missing name");
-    if (root.containsKey("l_mode")) {profile.led_mode = root["l_mode"];}else Serial.println("missing l_mode");
-    if (root.containsKey("p_mode")) {profile.press_mode = root["p_mode"];}else Serial.println("missing p_mode");
-    if (root.containsKey("t_mode")) {profile.tuya_mode = root["t_mode"];}else Serial.println("missing t_mode");
-    if (root.containsKey("l_time")) {profile.led_time = root["l_time"];}else Serial.println("missing l_time");
-    if (root.containsKey("p_time")) {profile.press_time = root["p_time"];}else Serial.println("missing p_time");
-    if (root.containsKey("repeat_time")){profile.repeat_time = root["repeat_time"];}else Serial.println("missing repeat_time");
-    if (root.containsKey("poff_time")){profile.power_off_time = root["poff_time"];}else Serial.println("missing poff_time");
-    if (root.containsKey("t_ip")){profile.tuya_ip =   (const char *)root["t_ip"];}else Serial.println("missing t_ip");
-    if (root.containsKey("t_device")){profile.tuya_device =   (const char *)root["t_device"];}else Serial.println("missing t_device");
-    if (root.containsKey("t_api_client")){profile.tuya_api_client =  (const char *)root["t_api_client"];}else Serial.println("missing t_api_client");
-     if (root.containsKey("t_api_key")){profile.tuya_api_key =  (const char *)root["t_api_key"];}else Serial.println("missing t_api_key");
-    Serial.println(373);
-    if (root.containsKey("p_string")){profile.press_string =  (const char *)root["p_string"];}else Serial.println("missing p_string");
-    Serial.println(375);
+    if (root.containsKey("name")) {
+      profile.name = (const char *) root["name"];
+    } else Serial.println("missing name");
+    if (root.containsKey("l_mode")) {
+      profile.led_mode = root["l_mode"];
+    } else Serial.println("missing l_mode");
+    if (root.containsKey("p_mode")) {
+      profile.press_mode = root["p_mode"];
+    } else Serial.println("missing p_mode");
+    if (root.containsKey("t_mode")) {
+      profile.tuya_mode = root["t_mode"];
+    } else Serial.println("missing t_mode");
+    if (root.containsKey("l_time")) {
+      profile.led_time = root["l_time"];
+    } else Serial.println("missing l_time");
+    if (root.containsKey("p_time")) {
+      profile.press_time = root["p_time"];
+    } else Serial.println("missing p_time");
+    if (root.containsKey("repeat_time")) {
+      profile.repeat_time = root["repeat_time"];
+    } else Serial.println("missing repeat_time");
+    if (root.containsKey("poff_time")) {
+      profile.power_off_time = root["poff_time"];
+    } else Serial.println("missing poff_time");
+    if (root.containsKey("t_device_id")) {
+      profile.tuya_device_id =   (const char *)root["t_device_id"];
+    } else Serial.println("missing t_device_id");
+    if (root.containsKey("t_api_client")) {
+      profile.tuya_api_client =  (const char *)root["t_api_client"];
+    } else Serial.println("missing t_api_client");
+    if (root.containsKey("t_host")) {
+      profile.tuya_host =   (const char *)root["t_host"];
+    } else Serial.println("missing t_host");
+    if (root.containsKey("t_api_key")) {
+      profile.tuya_api_key =  (const char *)root["t_api_key"];
+    } else Serial.println("missing t_api_key");
+   
+    if (root.containsKey("p_string")) {
+      profile.press_string =  (const char *)root["p_string"];
+    } else Serial.println("missing p_string");
+    if (root.containsKey("t_device_id")) {
+      profile.tuya_device_id =  (const char *)root["t_device_id"];
+    } else Serial.println("missing t_device_id");
   } else {
     Serial.println("json failed:");
     Serial.println(err.f_str());
@@ -393,13 +418,13 @@ bool writeProfiles() {
   Serial.println("Write Profiles");
   if (file) {
     for (int i = 0; i < profile_count; i++) {
-      
+
       Serial.println(profiles[i]);
       for (int j = 0; j < profiles[i].length(); j++) {
         file.write(profiles[i][j]);
       }
       file.write('\n');
-      
+
     }
     file.close();
     return true;
@@ -422,12 +447,12 @@ bool readProfiles() {
       } else {
         buffer[pos++] = '\0';
         profiles[profile_count++] = String(buffer);
-        Serial.println(profiles[profile_count-1]);
-        pos=0;
+        Serial.println(profiles[profile_count - 1]);
+        pos = 0;
       }
-      
+
     }
-    Serial.print("Read profiles :");Serial.println(profile_count);
+    Serial.print("Read profiles :"); Serial.println(profile_count);
     return true;
   }
   return false;
@@ -557,6 +582,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     <label for="api_host"><span>Tuya API url</span><input  id="api_host" type="text" maxlength="100"  name="t_host" value="%T_HOST%"></label>
     <label for="api_id"><span>API Client Id</span><input  id="api_id" type="text" maxlength="20"  name="t_api_client" value="%T_CLIENT%"></label>
     <label for="api_key"><span>API Secret Key</span><input  id="api_key" type="text" maxlength="32" name="t_api_key" value="%T_APIKEY%"></label>
+    <label for="device_id"><span>Device Id</span><input  id="device_id" type="text" maxlength="32" name="t_device_id" value="%T_DEVICE%"></label>
  <label for="poff"><span>Power Off (M) 0 for never</span><input  id="poff" type="text" maxlength="32" name="poff" value="%POWER_OFF%"></label>
   <input type='hidden' name='change' value='' />
     <input type="submit" name="action" value="Create Profile"><input type="submit" name="action" value="Delete Profile" onclick="return confirm('Are you sure you want to delete this profile?')"><input type="submit" name="action" value="Submit">
@@ -589,9 +615,8 @@ void handleSetting() {
   String npress_mode_string = server.arg("p_mode");
   int npress_mode = profile.press_mode;
   String npress_string = server.arg("p_string");
-  String ntuya_device = server.arg("t_device");
-  String ntuya_ip = server.arg("t_ip");
   String ntuya_api_key = server.arg("t_api_key");
+  String ntuya_device_id = server.arg("t_device_id");
   String change = server.arg("change");
 
   String ntuya_api_client = server.arg("t_api_client");
@@ -605,9 +630,9 @@ void handleSetting() {
       nname += "_copy" + String(i);
     }
     while (haveProfile(nname) != -1) {
-      profile.name.replace( String("_copy") + String(i), "");
+      nname.replace( String("_copy") + String(i), "");
       i++;
-      profile.name += "_copy" + String(i);
+      nname += "_copy" + String(i);
     }
     Serial.println("New Profile");
     Serial.println(profile.name);
@@ -683,14 +708,13 @@ void handleSetting() {
         goto error_case;
       } else {
         int index = haveProfile(profile.name);
-        profiles[index]=nname;
+        profiles[index] = nname;
         profile.name = nname;
         writeProfiles();
         Serial.println("set profile to the renamed");
         Serial.println(nname);
-        
+
         changed = true;
-        reboot = true;
       }
       Serial.println("changed name");
     }
@@ -762,14 +786,9 @@ void handleSetting() {
       profile.press_string = npress_string;
       changed = true;
     }
-    if (profile.tuya_device != ntuya_device) {
-      profile.tuya_device = ntuya_device;
-      changed = true;
-      reboot = true;
-    }
 
-    if (profile.tuya_ip != ntuya_ip) {
-      profile.tuya_ip = ntuya_ip;
+    if (profile.tuya_device_id != ntuya_device_id) {
+      profile.tuya_device_id = ntuya_device_id;
       changed = true;
       reboot = true;
     }
@@ -826,8 +845,7 @@ error_case:
   new_index_html.replace( "%L_TIME%", String(profile.led_time));
   new_index_html.replace( "%REPEAT_TIME%", String(profile.repeat_time));
   new_index_html.replace( "%L_MODE%", String(profile.led_mode));
-  new_index_html.replace( "%T_DEVICE%", profile.tuya_device);
-  new_index_html.replace( "%T_IP%", profile.tuya_ip);
+  new_index_html.replace( "%T_DEVICE%", profile.tuya_device_id);
   new_index_html.replace( "%T_CLIENT%", profile.tuya_api_client);
   new_index_html.replace( "%T_APIKEY%", profile.tuya_api_key);
   new_index_html.replace( "%T_HOST%", profile.tuya_host);
@@ -856,12 +874,12 @@ error_case:
     new_index_html.replace( "%REBOOT%", String(""));
   }
   server.send(200, "text/html", new_index_html.c_str());
- Serial.println("html sent");
+  Serial.println("html sent");
   if (reboot) {
     Serial.println("about to reboot");
-  
+
     delay(4000);
-     Serial.println("rebooting now");
+    Serial.println("rebooting now");
     resetFunc();
   }
 }
@@ -966,7 +984,7 @@ void setup(void) {
   if (readSettings(buffer)) {
 
 
-    Serial.print("Boot settings :");Serial.println(profile_count);
+    Serial.print("Boot settings :"); Serial.println(profile_count);
     installProfile(atol(buffer.c_str()));
 
 
@@ -974,7 +992,9 @@ void setup(void) {
     init_default_profile();
   }
 
-  if (profile.tuya_api_client != "" && profile.tuya_api_key != "" && profile.tuya_host != "" ) {
+  if (profile.tuya_api_client != "" && profile.tuya_api_key != "" && profile.tuya_host != ""  && profile.tuya_device_id != "") {
+    
+    Serial.println("Create Tuya Client");
     tuya = new TuyaAuth(profile.tuya_host.c_str(), profile.tuya_api_client.c_str(), profile.tuya_api_key.c_str());
   }
 
@@ -983,6 +1003,14 @@ void setup(void) {
 void loop(void) {
   button.loop(); // MUST call the loop() function first
   server.handleClient();
+  if (tuya && profile.tuya_switch==""){
+    
+    
+    if (tuya->isConnected()){
+      tuya->TGetSwitch(profile.tuya_device_id.c_str(), profile.tuya_switch);
+      Serial.println(profile.tuya_switch);
+    }
+  }
   if (button.isPressed()) {
     if (bleKeyboard.isConnected()) {
 
@@ -991,9 +1019,19 @@ void loop(void) {
     } else {
       Serial.print(".");
     }
+
+    if (tuya){
+        switch(profile.tuya_mode){
+          case TUYA_ON:
+              String command = String( "{\"commands\":[{\"code\":\")+profile.tuya_switch+String(\"value\":true}]}");
+              //tuya->TCommand(profile.tuya_device_id.c_str(),command.c_str());
+              break;
+        }
+      
+    }
   }
 
-  delay(20);//allow the cpu to switch to other tasks
+  delay(200);//allow the cpu to switch to other tasks
 
 
 }
