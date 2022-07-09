@@ -16,6 +16,7 @@ WiFiManager wifiManager;
 #include "SPIFFS.h"
 #include <EEPROM.h>
 
+#include "tuyaAPI33.hpp"
 
 #define EEPROM_SIZE 100
 
@@ -27,7 +28,7 @@ const char* loginIndex =
   "<table width='20%' bgcolor='A09F9F' align='center'>"
   "<tr>"
   "<td colspan=2>"
-  "<center><font size=4><b>ESP32 Login Page</b></font></center>"
+  "<center><font size=4><b>Big Button Login Page</b></font></center>"
   "<br>"
   "</td>"
   "<br>"
@@ -121,10 +122,10 @@ const char *LED_ON_PRESSED = "led_on_press";
 
 
 BleKeyboard bleKeyboard("BigButton");
-
+#define TUYA_COMMAND_PORT 6668
 #include "TuyaAuth.h"
 TuyaAuth *tuya;
-
+tuyaAPI33 *tuyaclient;
 
 #include <ezButton.h>
 #define BUTTON_PIN 15
@@ -219,10 +220,9 @@ class CButtonProfile {
   public:
     String name;
     int power_off_time;
-    int press_time;
+
     int press_mode;
     int led_mode;
-    int led_time;
     int repeat_time;
     int pressrelease_time;
     int tuya_mode;
@@ -231,13 +231,18 @@ class CButtonProfile {
     String tuya_api_key;
     String tuya_api_client;
     String tuya_host;
+    String tuya_ip;
     // switch command from cloud
     String tuya_switch;
+    String tuya_localkey;
     bool tuya_have_status;
     bool tuya_on;
     bool led_on;
     bool button_on;
     long ms;
+
+    bool tuya_error;
+    String tuya_error_string;
 
 };
 
@@ -260,6 +265,30 @@ void verifyProfile() {
 
 }
 
+bool tuya_on(){
+  
+    if (tuya){
+      String command = String( "{\"commands\":[{\"code\":\"") + profile.tuya_switch + String("\",\"value\":true}]}");
+      if( tuya->TCommand(profile.tuya_device_id.c_str(), command.c_str())){
+        profile.tuya_on = true;
+          return true;
+      }
+    }
+    return false;
+}
+
+bool tuya_off(){
+  
+    if (tuya){
+      String command = String( "{\"commands\":[{\"code\":\"") + profile.tuya_switch + String("\",\"value\":false}]}");
+      if ( tuya->TCommand(profile.tuya_device_id.c_str(), command.c_str())){
+          profile.tuya_on = false;
+          return true;
+      }
+    }
+    return false;
+}
+
 void writeCurrentProfile() {
 
   char buffer[1000];
@@ -273,13 +302,13 @@ void writeCurrentProfile() {
   strcat(buffer, "\",\"t_api_key\": \""); strcat(buffer, profile.tuya_api_key.c_str());
   strcat(buffer, "\",\"t_api_client\": \""); strcat(buffer, profile.tuya_api_client.c_str());
   strcat(buffer,   "\",\"t_host\": \"");  strcat(buffer, profile.tuya_host.c_str());
+  strcat(buffer,   "\",\"t_localkey\": \"");  strcat(buffer, profile.tuya_localkey.c_str());
+  strcat(buffer,   "\",\"t_ip\": \"");  strcat(buffer, profile.tuya_ip.c_str());
   strcat(buffer,   "\",\"t_mode\": \""); strcat(buffer, String(profile.tuya_mode).c_str());
-  strcat(buffer,    "\",\"l_time\": \""); strcat(buffer, String(profile.led_time).c_str());
   strcat(buffer,   "\",\"poff_time\" :\""); strcat(buffer, String(profile.power_off_time).c_str());
   strcat(buffer,   "\",\"repeat_time\" :\""); strcat(buffer, String(profile.repeat_time).c_str());
   strcat(buffer,   "\",\"pressrelease_time\" :\""); strcat(buffer, String(profile.pressrelease_time).c_str());
   strcat(buffer,  "\",\"p_mode\": \""); strcat(buffer, String(profile.press_mode).c_str());
-  strcat(buffer,  "\",\"p_time\": \""); strcat(buffer, String(profile.press_time).c_str());
   strcat(buffer, "\"}");
 
   String filename = String("/") + String(haveProfile(profile.name)) + ".js";
@@ -377,16 +406,10 @@ void installProfile(int profilenumber) {
     if (root.containsKey("t_mode")) {
       profile.tuya_mode = root["t_mode"];
     } else Serial.println("missing t_mode");
-    if (root.containsKey("l_time")) {
-      profile.led_time = root["l_time"];
-    } else Serial.println("missing l_time");
-    if (root.containsKey("p_time")) {
-      profile.press_time = root["p_time"];
-    } else Serial.println("missing p_time");
     if (root.containsKey("repeat_time")) {
       profile.repeat_time = root["repeat_time"];
     } else Serial.println("missing repeat_time");
-    if (root.containsKey("repeat_time")) {
+    if (root.containsKey("pressrelease_time")) {
       profile.pressrelease_time = root["pressrelease_time"];
     } else Serial.println("missing pressrelease_time");
     if (root.containsKey("poff_time")) {
@@ -401,6 +424,12 @@ void installProfile(int profilenumber) {
     if (root.containsKey("t_host")) {
       profile.tuya_host =   (const char *)root["t_host"];
     } else Serial.println("missing t_host");
+        if (root.containsKey("t_localkey")) {
+      profile.tuya_localkey =   (const char *)root["t_localkey"];
+    } else Serial.println("missing t_localkey");
+        if (root.containsKey("t_ip")) {
+      profile.tuya_ip =   (const char *)root["t_ip"];
+    } else Serial.println("missing t_ip");
     if (root.containsKey("t_api_key")) {
       profile.tuya_api_key =  (const char *)root["t_api_key"];
     } else Serial.println("missing t_api_key");
@@ -470,9 +499,13 @@ bool readProfiles() {
 
     }
     Serial.print("Read profiles :"); Serial.println(profile_count);
-    return true;
+
   }
-  return false;
+  if (profile_count == 0) {
+    profile_count = 1;
+    profiles[0] = "Default";
+  }
+  return true;
 
 }
 
@@ -481,6 +514,7 @@ bool readProfiles() {
 #define LED_ON 2
 #define LED_OFF 3
 #define LED_TOGGLE_PRESS 4
+#define LED_TUYA 5
 
 #define PRESS_PRINT 0
 #define PRESS_PRESSRELEASE 1
@@ -492,9 +526,24 @@ bool readProfiles() {
 #define TUYA_NONE 0
 
 
-const char index_html[] PROGMEM = R"rawliteral(
+const char style_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE HTML><html><head>
-<style type="text/css">
+<style>
+.doton {
+  height: 400px;
+  width: 400px;
+  background-color: #f00;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dotoff {
+  height: 400px;
+  width: 400px;
+  background-color: #000;
+  border-radius: 50%;
+  display: inline-block;
+}
 .form-style-2{
   max-width: 800px;
   padding: 20px 12px 10px 20px;
@@ -563,25 +612,27 @@ const char index_html[] PROGMEM = R"rawliteral(
   background: #EA7B00;
   color: #fff;
 }
-</style>
 
+</style>
+)rawliteral";
+
+const char index_html[] PROGMEM = R"rawliteral(
   <title>Big Button Setup</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   </head><body>
-  %REBOOT%
+  %REBOOT%<br />Status: %STATUS%
   <div class="form-style-2">
   <div class="form-style-2-heading">Provide your information</div>
   <form action="/setting" method="POST">
  <label for="profile_list"><span>Profile</span>%PROFILE_LIST%</label>
  <label for="profile"><span>Edit Profile Name</span><input name="profile" id="profile" value="%PROFILE%" ></label>
-  <label for="p_string"><span>Press String</span><input name="p_string" id="p_string" value="%P_STRING%" ></label>
+  <label for="p_string"><span>Bluetooth Press String</span><input name="p_string" id="p_string" value="%P_STRING%" ></label>
     <label for="p_mode"><span>Bluetooth Mode</span><select name="p_mode" id="p_mode" >
   <option value="print"  %PRESSPRINT_S%>Print</option>
   <option value="pressrelease" %PRESSRELEASE_S%>Press and Release</option>
   <option value="none" %PRESSNONE_S%>None</option>
 </select></label>
-    <label for="p_time"><span>Press Time (ms)</span><input id="p_time" type="number" name="p_time" value="%P_TIME%"></label>
-      <label for="pressrelease_time"><span>Press Time (ms)</span><input id="pressrelease_time" type="number" name="pressrelease_time" value="%PRESSRELEASE_TIME%"></label>
+      <label for="pressrelease_time"><span>Bluetooth Press Time (ms)</span><input id="pressrelease_time" type="number" name="pressrelease_time" value="%PRESSRELEASE_TIME%"></label>
         <label for="repeat_time"><span>Repeat Time (ms)</span><input id="repeat_time" type="number" name="repeat_time" value="%REPEAT_TIME%"></label>
     <label for="l_mode"><span>Led Mode</span><select name="l_mode" id="l_mode" >
   <option value="l_on"  %L_ON_S%>Always On
@@ -589,6 +640,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   <option value="l_on_press" %L_ON_PRESS_S%>On when pressed
   <option value="l_off_press" %L_OFF_PRESS_S%>Off when pressed
   <option value="l_toggle_press" %L_TOGGLE_PRESS_S%>Toggle when pressed
+   <option value="l_tuya" %L_TUYA%>On when Tuya Device on
 </select></label>
     <label for="l_time (ms)"><span>Led Time (ms)</span><input id="l_time" type="number" name="l_time" value="%L_TIME%"></label>
    <label for="t_mode"><span>Tuya Mode</span><select name="t_mode" id="t_mode" >
@@ -602,6 +654,8 @@ const char index_html[] PROGMEM = R"rawliteral(
     <label for="api_id"><span>API Client Id</span><input  id="api_id" type="text" maxlength="20"  name="t_api_client" value="%T_CLIENT%"></label>
     <label for="api_key"><span>API Secret Key</span><input  id="api_key" type="text" maxlength="32" name="t_api_key" value="%T_APIKEY%"></label>
     <label for="device_id"><span>Device Id</span><input  id="device_id" type="text" maxlength="32" name="t_device_id" value="%T_DEVICE%"></label>
+    <label for="localkey"><span>Local Key (system will find this)</span><input  id="localkey" type="text" maxlength="32" name="t_localkey" value="%T_LOCALKEY%"></label>
+    <label for="ip"><span>ip address</span><input  id="ip" type="text" maxlength="32" name="t_ip" value="%T_IP%"></label>
  <label for="poff"><span>Power Off (M) 0 for never</span><input  id="poff" type="text" maxlength="32" name="poff" value="%POWER_OFF%"></label>
   <input type='hidden' name='change' value='' />
     <input type="submit" name="action" value="Create Profile"><input type="submit" name="action" value="Delete Profile" onclick="return confirm('Are you sure you want to delete this profile?')"><input type="submit" name="action" value="Submit">
@@ -609,6 +663,119 @@ const char index_html[] PROGMEM = R"rawliteral(
  </div>
 </body></html>)rawliteral";
 
+const char root_html[] PROGMEM = R"rawliteral(
+  <title>Big Button</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  </head><body>
+   Status: %STATUS%
+  <div class="form-style-2">
+  <div class="form-style-2-heading">Use file following links</div>
+  <p><a href="/setting">Settings - how do you want Big Button to behave?</a></p>
+  <p><a href="/login">Login - Login to update Big Button with emailed new firmware?</a></p>
+ 
+  <p><a href="http://%DEVICE%/on">on - turn on</a></p>
+  <p><a href="http://%DEVICE%/off">off - turn off</a></p>
+  <p><a href="http://%DEVICE%/status">status - see/set on/off</a></p>
+    <p><a href="http://%DEVICE%/status">toggle - toggle device</a></p>
+     <p><a href="/export">Export - Allows you to save settings to a file</a></p>
+ </div></div>
+</body></html>)rawliteral";
+
+
+
+const char status_html[] PROGMEM = R"rawliteral(
+  <title>Big Button On</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  </head><body>
+   Status: %STATUS%
+   <div style="text-align:center">
+   <a href="http://%DEVICE%/toggle"><span class="%STATUS_CLASS%"></span></a>
+   </div>
+</body></html>)rawliteral";
+
+String ip2Str(IPAddress ip){
+  String s="";
+  for (int i=0; i<4; i++) {
+    s += i  ? "." + String(ip[i]) : String(ip[i]);
+  }
+  return s;
+}
+
+String getStatus(){
+ 
+  static String status;
+
+ status = ip2Str(WiFi.localIP());
+  time_t t = time(NULL);
+  // time will be offset from 0 until we have synced
+  if (t < 99999999) { 
+      status+= " : Waiting on real time to sync before tuya can connect. This can occasionally take a couple of minutes : ";
+  }else if (tuya && tuya->isConnected()){
+    status +="<span> : Tuya connected : </span>";
+    if (profile.tuya_error){
+      status += String("<span> : ")+profile.tuya_error_string+String(" : </span>");
+    }
+    
+    if (profile.tuya_switch == ""){
+      status += "<span> : Waiting to get switch information : </span>";
+    }
+  
+  }else if (tuya){
+    status +="<span> : Tuya not connected : </span>";
+  }
+ 
+
+  if (profile.press_mode != PRESS_NONE){
+    if (bleKeyboard.isConnected()){
+      status +="<span> : Bluetooth connected : </span>";
+    }else{
+      status +="<span> : Bluetooth not connected : </span>";
+    }
+  }
+  return status;
+}  
+
+
+
+void handleRoot() {
+  
+   String new_index_html = String(style_html)+String(root_html);
+  new_index_html.replace("%STATUS%",getStatus());
+  new_index_html.replace("%DEVICE%",ip2Str(WiFi.localIP()));
+  server.send(200, "text/html", new_index_html.c_str());
+}
+
+void handleStatus() {
+     String new_index_html = String(style_html)+String(status_html);
+ new_index_html.replace("</style>","</style><meta http-equiv=\"refresh\" content=\"2;URL='/status'\">");
+  new_index_html.replace("%STATUS%",getStatus());
+    new_index_html.replace("%STATUS_CLASS%",profile.led_on?"doton":"dotoff");
+    new_index_html.replace("%DEVICE%",ip2Str(WiFi.localIP()));
+  server.send(200, "text/html", new_index_html.c_str());  
+
+}
+
+
+void handleOn() {
+    tuya_on();
+  handleStatus();
+
+}
+
+void handleOff() {
+  tuya_off();
+  handleStatus();
+}
+
+
+void handleToggle(){
+  if (profile.tuya_on){
+    tuya_off();
+  }else{
+    tuya_on();
+  }
+  handleStatus();
+}
 
 void handleExport() {
   String buffer;
@@ -624,6 +791,8 @@ void handleExport() {
   server.send(200, "text/plain", buffer.c_str());
 }
 
+
+
 void handleSetting() {
 
   Serial.println("__________________________________________\nHandle setting");
@@ -635,10 +804,8 @@ void handleSetting() {
   String ntuya_host = server.arg("t_host");
   String nname = server.arg("profile");
   String nprofile_list = server.arg("profile_list");
-  int npress_time = strtol(server.arg("p_time").c_str(), NULL, 10);
   int nrepeat_time = strtol(server.arg("repeat_time").c_str(), NULL, 10);
   int npressrelease_time = strtol(server.arg("pressrelease_time").c_str(), NULL, 10);
-  int nled_time = strtol(server.arg("l_time").c_str(), NULL, 10);
   int npower_off_time = strtol(server.arg("poff").c_str(), NULL, 10);
   String nled_mode_string = server.arg("l_mode");
   int nled_mode = profile.led_mode;
@@ -649,6 +816,8 @@ void handleSetting() {
   String npress_string = server.arg("p_string");
   String ntuya_api_key = server.arg("t_api_key");
   String ntuya_device_id = server.arg("t_device_id");
+  String ntuya_localkey = server.arg("t_localkey");
+  String ntuya_ip = server.arg("t_ip");
   String change = server.arg("change");
 
   String ntuya_api_client = server.arg("t_api_client");
@@ -753,10 +922,6 @@ void handleSetting() {
       Serial.println("changed name");
     }
 
-    if (profile.press_time != npress_time) {
-      profile.press_time = npress_time;
-      changed = true;
-    }
 
     if (profile.repeat_time != nrepeat_time) {
       profile.repeat_time = nrepeat_time;
@@ -765,11 +930,6 @@ void handleSetting() {
 
     if (profile.pressrelease_time != npressrelease_time) {
       profile.pressrelease_time = npressrelease_time;
-      changed = true;
-    }
-
-    if (profile.led_time != nled_time) {
-      profile.led_time = nled_time;
       changed = true;
     }
 
@@ -788,6 +948,8 @@ void handleSetting() {
       nled_mode = LED_OFF_PRESS;
     } else if (nled_mode_string == "l_toggle_press") {
       nled_mode = LED_TOGGLE_PRESS;
+    } else if (nled_mode_string == "l_tuya") {
+      nled_mode = LED_TUYA;
     }
     if (profile.led_mode != nled_mode) {
       profile.led_mode = nled_mode;
@@ -851,6 +1013,18 @@ void handleSetting() {
       changed = true;
       reboot = true;
     }
+
+    if (profile.tuya_ip !=  ntuya_ip)  {
+      profile.tuya_ip = ntuya_ip;
+      changed = true;
+      reboot = true;
+    }
+
+    if (profile.tuya_localkey !=  ntuya_localkey)  {
+      profile.tuya_localkey = ntuya_localkey;
+      changed = true;
+      reboot = true;
+    }
   }
   Serial.println("Have read args");
   if (changed) {
@@ -862,9 +1036,11 @@ void handleSetting() {
   }
 
 error_case:
+
+   String new_index_html = String(style_html)+String(index_html);
   Serial.println("construct select");
   String profile_list = "<select onchange=\"this.form.change.value='change';this.form.submit()\" name=\"profile_list\" id=\"profile_list\"  >";
-  for  (int i = 0; i != profile_count; i++) {
+  for  (int i = 0; i < profile_count; i++) {
     String selected;
     if (profiles[i] == profile.name) {
       selected = String(SELECTED);
@@ -875,15 +1051,13 @@ error_case:
   profile_list += "</select>";
   ///Serial.println(profile_list);
 
-  String new_index_html = index_html;
+
 
   Serial.println("macro replacement");
-
+ new_index_html.replace( "%STATUS%", getStatus());
   new_index_html.replace( "%PROFILE%", profile.name);
   new_index_html.replace( "%PROFILE_LIST%", profile_list);
-  new_index_html.replace( "%P_TIME%", String(profile.press_time));
   new_index_html.replace( "%P_MODE%", String(profile.press_mode));
-  new_index_html.replace( "%L_TIME%", String(profile.led_time));
   new_index_html.replace( "%REPEAT_TIME%", String(profile.repeat_time));
   new_index_html.replace( "%PRESSRELEASE_TIME%", String(profile.pressrelease_time));
   new_index_html.replace( "%L_MODE%", String(profile.led_mode));
@@ -891,6 +1065,8 @@ error_case:
   new_index_html.replace( "%T_CLIENT%", profile.tuya_api_client);
   new_index_html.replace( "%T_APIKEY%", profile.tuya_api_key);
   new_index_html.replace( "%T_HOST%", profile.tuya_host);
+  new_index_html.replace( "%T_LOCALKEY%", profile.tuya_localkey);
+  new_index_html.replace( "%T_IP%", profile.tuya_ip);
   new_index_html.replace( "%P_STRING%", profile.press_string);
   new_index_html.replace( "%PRESSRELEASE_S%", profile.press_mode == PRESS_PRESSRELEASE ? SELECTED : "");
   new_index_html.replace( "%PRESSPRINT_S%", profile.press_mode == PRESS_PRINT ? SELECTED : "");
@@ -903,6 +1079,7 @@ error_case:
   new_index_html.replace( "%T_ON_S%", profile.tuya_mode == TUYA_ON ? SELECTED : "");
   new_index_html.replace( "%T_OFF_S%", profile.tuya_mode == TUYA_OFF ? SELECTED : "");
   new_index_html.replace( "%T_TOGGLE_S%", profile.tuya_mode == TUYA_TOGGLE ? SELECTED : "");
+  new_index_html.replace( "%L_TUYA%", profile.led_mode == LED_TUYA ? SELECTED : "");
   new_index_html.replace( "%T_NONE_S%", profile.tuya_mode == TUYA_NONE ? SELECTED : "");
   new_index_html.replace( "%POWER_OFF%", String(profile.power_off_time));
 
@@ -965,14 +1142,22 @@ void setup(void) {
 
   wifiManager.setEnableConfigPortal(false);
   if (!wifiManager.autoConnect("AutoConnectAP", "password")) {
-    wifiManager.startConfigPortal("ConfigureWiFi");
-    const char *new_name = MDNSName.getValue();
-    if (strcmp(new_name, device_name) != 0) {
-      EEPROM.begin(EEPROM_SIZE);
-      writeId(new_name);
-      EEPROM.commit();
-      EEPROM.end();
-      strcpy(device_name, new_name);
+    if ( digitalRead(BUTTON_PIN) == LOW) {
+      Serial.println("Button down so config");
+      String PortalName = String("Configure") + String(device_name) + String("WiFi");
+      wifiManager.startConfigPortal(PortalName.c_str());
+      const char *new_name = MDNSName.getValue();
+      if (strcmp(new_name, device_name) != 0) {
+        EEPROM.begin(EEPROM_SIZE);
+        writeId(new_name);
+        EEPROM.commit();
+        EEPROM.end();
+        strcpy(device_name, new_name);
+      }
+    } else {
+
+      Serial.println("reboot");
+      resetFunc();
     }
   }
 
@@ -985,12 +1170,18 @@ void setup(void) {
     Serial.println("MDNS responder");
   }
 #endif
-
+  server.on("/", handleRoot);
+  server.on("/toggle", handleToggle);
+  server.on("/settings", handleSetting);
   server.on("/setting", handleSetting);
   server.on("/export", handleExport);
+  server.on("/on", handleOn);
+  server.on("/off", handleOff);
+  server.on("/status", handleStatus);
+
 
   /*return index page which is stored in serverIndex */
-  server.on("/", HTTP_GET, []() {
+  server.on("/login", HTTP_GET, []() {
     server.sendHeader("Connection", "close");
     server.send(200, "text/html", loginIndex);
   });
@@ -1027,9 +1218,6 @@ void setup(void) {
   server.begin();
   Serial.println("HTTP server");
 
-  if (profile.press_mode != PRESS_NONE) {
-    bleKeyboard.begin();
-  }
 
 
 
@@ -1046,12 +1234,20 @@ void setup(void) {
     init_default_profile();
   }
 
+  profile.tuya_error = false;
   profile.tuya_have_status = false;
 
   if (profile.tuya_api_client != "" && profile.tuya_api_key != "" && profile.tuya_host != ""  && profile.tuya_device_id != "") {
 
-    Serial.println("Create Tuya Client");
+    Serial.println("Create Cloud Tuya Client");
     tuya = new TuyaAuth(profile.tuya_host.c_str(), profile.tuya_api_client.c_str(), profile.tuya_api_key.c_str());
+    Serial.println("Create Local Tuya Client");
+    tuyaclient = new tuyaAPI33();
+    if (!tuyaclient->ConnectToDevice(std::string("192.168.68.197"), TUYA_COMMAND_PORT)){
+       Serial.println("No local connection");
+    }else{
+       Serial.println("Made local connection");
+    }
   }
   switch (profile.led_mode) {
     case LED_ON:
@@ -1064,6 +1260,10 @@ void setup(void) {
       break;
 
   }
+  if (profile.press_mode != PRESS_NONE) {
+    bleKeyboard.begin();
+  }
+
 
   last_activity = millis();
   Serial.print("Power off: "); Serial.println(profile.power_off_time);
@@ -1072,7 +1272,7 @@ void setup(void) {
 
 void loop(void) {
 
-
+  static long count = 1;
   if (profile.power_off_time != 0 && last_activity + (profile.power_off_time * 60000) < millis() ) {
 
     Serial.println("Going to sleep");
@@ -1084,8 +1284,27 @@ void loop(void) {
   server.handleClient();
   if (tuya && profile.tuya_switch == "") {
     if (tuya->isConnected()) {
-      tuya->TGetSwitch(profile.tuya_device_id.c_str(), profile.tuya_switch);
-      Serial.println(profile.tuya_switch);
+      if (tuya->TGetSwitch(profile.tuya_device_id.c_str(), profile.tuya_switch)){
+         Serial.println(profile.tuya_switch);
+         profile.tuya_error = false;
+      }else{
+         profile.tuya_error = true;
+         profile.tuya_error_string = true;
+      }
+    }
+  }
+  if (tuya && profile.tuya_localkey == "") {
+    if (tuya->isConnected()) {
+      
+ #if 1
+      if (tuya->TGetDeviceDetailString(profile.tuya_device_id.c_str(), "local_key", profile.tuya_localkey)){
+         Serial.print("localkey");Serial.println(profile.tuya_localkey);
+         profile.tuya_error = false;
+      }else{
+         profile.tuya_error = true;
+         profile.tuya_error_string = true;
+      }
+ #endif     
     }
   }
   if (tuya && profile.tuya_have_status == false && profile.tuya_switch != "" ) {
@@ -1095,6 +1314,8 @@ void loop(void) {
 
       if (tuya->TGetOnStatus(profile.tuya_device_id.c_str(), profile.tuya_switch.c_str(), profile.tuya_on)) {
         Serial.print("Switch is: "); Serial.println(profile.tuya_on);
+      }else{
+        profile.tuya_error = true;
       }
       profile.tuya_have_status = true;
       digitalWrite(LED_PIN, LOW);
@@ -1106,7 +1327,21 @@ void loop(void) {
       digitalWrite(LED_PIN, profile.led_on ? HIGH : LOW);
     }
   }
+  if ((count++ % 300) == 0 ) {
+    if (tuya) {
+
+      if (tuya->TGetOnStatus(profile.tuya_device_id.c_str(), profile.tuya_switch.c_str(), profile.tuya_on)){
+          //Serial.print("Switch is: "); Serial.println(profile.tuya_on);
+          profile.tuya_error = false;
+      }else{
+         profile.tuya_error = true;
+         profile.tuya_error_string = tuya->getError();
+      }
+    }
+  }
   if (button.getState() == LOW) {
+
+    Serial.println("button pressed");
     //if (digitalRead(BUTTON_PIN)== LOW){
     bool do_action = false;
     last_activity = millis();
@@ -1138,6 +1373,8 @@ void loop(void) {
 
       bleKeyboard.releaseAll();
     }
+
+
     if (do_action) {
       switch (profile.led_mode) {
         case LED_ON_PRESS:
@@ -1154,31 +1391,34 @@ void loop(void) {
     if (tuya) {
 
       String command;
+
+
       if ( do_action) {
         switch (profile.tuya_mode) {
           case TUYA_ON:
-            command = String( "{\"commands\":[{\"code\":\"") + profile.tuya_switch + String("\",\"value\":true}]}");
-            tuya->TCommand(profile.tuya_device_id.c_str(), command.c_str());
+           tuya_on();
             break;
           case TUYA_OFF:
-            command = String( "{\"commands\":[{\"code\":\"") + profile.tuya_switch + String("\",\"value\":false}]}");
-            tuya->TCommand(profile.tuya_device_id.c_str(), command.c_str());
+           tuya_off();
             break;
           case TUYA_TOGGLE:
-
+            Serial.print("toggle");Serial.println(profile.tuya_on);
             if (profile.tuya_on) {
-              command = String( "{\"commands\":[{\"code\":\"") + profile.tuya_switch + String("\",\"value\":true}]}");
+              tuya_off();
             } else {
-              command = String( "{\"commands\":[{\"code\":\"") + profile.tuya_switch + String("\",\"value\":false}]}");
+              tuya_on();
             }
-            profile.tuya_on = !profile.tuya_on;
-            tuya->TCommand(profile.tuya_device_id.c_str(), command.c_str());
+          
+            
         }
+
       }
     }
   } else {
 
     profile.button_on = false;
+    //Serial.println(profile.led_mode);
+    //Serial.println(profile.tuya_on);
     switch (profile.led_mode) {
       case LED_ON_PRESS:
         digitalWrite(LED_PIN, LOW);
@@ -1194,7 +1434,16 @@ void loop(void) {
         digitalWrite(LED_PIN, LOW);
         profile.led_on = false;
         break;
-
+      case LED_TUYA:
+            
+        profile.led_on =  profile.tuya_on;
+        
+        if (profile.tuya_on) {
+          digitalWrite(LED_PIN, HIGH);
+        } else {
+          digitalWrite(LED_PIN, LOW);
+        }
+        break;
     }
   }
 
