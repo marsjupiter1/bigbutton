@@ -322,7 +322,7 @@ void statusTask( void * parameter) {
           Serial.print("Reestablished local connection: "); Serial.println(time(NULL) - s);
           reconnects++;
           profile.tuya_local_connected = true;
-        }else{
+        } else {
           tuyaclient->reconnect();
         }
       }
@@ -336,19 +336,19 @@ void statusTask( void * parameter) {
 
 
 bool local_switch(bool on) {
-  
- local_tries++;
+
+  local_tries++;
   String tuyaresponse ;
-  String dps = String("\"dps\":{\"1\":")+(on? String("true"):String("false}"))+String("}");
+  String dps = String("\"dps\":{\"1\":") + (on ? String("true") : String("false}")) + String("}");
   Serial.println(dps);
-  if (tuyaclient->setDps(dps,tuyaresponse)){
+  if (tuyaclient->setDps(dps, tuyaresponse)) {
     Serial.print("TUYA SAYS DPS: " ); Serial.println(tuyaresponse);
     DynamicJsonDocument root(1000);
     DeserializationError err = deserializeJson(root, tuyaresponse.c_str());
     if (!err) {
       if (root.containsKey("dps")) {
         if (root["dps"].containsKey("1")) {
-          int nowon = root["dps"].containsKey("1");
+          int nowon = root["dps"]["1"];
           if (nowon != on) {
             Serial.println("wrong state");
             return false;
@@ -370,7 +370,7 @@ bool local_switch(bool on) {
 }
 
 bool cloud_switch(bool on) {
-  
+
   cloud_tries++;
   String command = String( "{\"commands\":[{\"code\":\"") + profile.tuya_switch + String("\",\"value\":") + (on ? String("true") : String("false")) + String("}]}");
   Serial.println(command);
@@ -383,8 +383,16 @@ bool cloud_switch(bool on) {
 
 bool tuya_switch(bool on) {
   attempts++;
+  if (profile.led_mode == LED_TUYA) {
+    if (profile.tuya_on) {
+      digitalWrite(LED_PIN, LOW);
+    } else {
+      digitalWrite(LED_PIN, HIGH);
+    }
+
+  }
   if (tuya) {
-    Serial.print("**** Switch *****");Serial.println(on);
+    Serial.print("**** Switch *****"); Serial.println(on);
     if (profile.tuya_localkey.length() > 0 && profile.tuya_local == TUYA_LOCAL && profile.tuya_local_connected) {
 
       if (local_switch(on)) {
@@ -892,9 +900,9 @@ String getStatus() {
       status += "<span> : Tuya local not connected : </span>";
     }
     status += "<span> : Attempts :" + String(attempts) + " : </span>";
-     status += "<span> : Cloud tries :" + String(cloud_tries) + " : </span>";
+    status += "<span> : Cloud tries :" + String(cloud_tries) + " : </span>";
     status += "<span> : Cloud errors :" + String(cloud_errors) + " : </span>";
-      status += "<span> : Local tries :" + String(local_tries) + " : </span>";
+    status += "<span> : Local tries :" + String(local_tries) + " : </span>";
     status += "<span> : Local errors :" + String(local_errors) + " : </span>";
     status += "<span> : Local reconnects :" + String(reconnects) + " : </span>";
   }
@@ -1624,14 +1632,7 @@ void loop(void) {
             tuya_switch(false);
             break;
           case TUYA_TOGGLE:
-            if (profile.led_mode == LED_TUYA) {
-              if (profile.tuya_on) {
-                digitalWrite(LED_PIN, LOW);
-              } else {
-                digitalWrite(LED_PIN, HIGH);
-              }
 
-            }
 
             Serial.print("toggle"); Serial.println(profile.tuya_on);
             if (profile.tuya_on) {
